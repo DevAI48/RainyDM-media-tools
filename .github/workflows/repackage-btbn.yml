@@ -10,8 +10,11 @@ on:
         required: true
         default: ffmpeg-7.1
       btbn_tag:
-        description: The pinned BtbN/FFmpeg-Builds release tag (e.g. autobuild-2025-09-30-12-54)
-        required: true
+        description: >-
+          BtbN/FFmpeg-Builds release tag (e.g. autobuild-2026-09-24-14-14). Leave empty to use
+          BtbN's newest dated build; the tag used is written to BUILDINFO.txt.
+        required: false
+        default: ""
       branch:
         description: The FFmpeg release branch in BtbN's asset names, e.g. 7.1
         required: true
@@ -29,11 +32,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download the pinned BtbN LGPL builds
+      - name: Choose the BtbN build
+        env:
+          REQUESTED: ${{ inputs.btbn_tag }}
+        run: |
+          tag="$REQUESTED"
+          if [ -z "$tag" ]; then
+            # "latest" moves every day; pin the dated tag it currently points to.
+            tag=$(gh release list -R BtbN/FFmpeg-Builds --limit 20 --json tagName \
+              --jq '[.[].tagName | select(startswith("autobuild-"))] | sort | last')
+          fi
+          [ -n "$tag" ] || { echo "::error::no BtbN autobuild release found"; exit 1; }
+          echo "Using BtbN release $tag"
+          echo "BTBN_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Download the BtbN LGPL builds
         run: |
           mkdir -p in
+          available=$(gh release view "$BTBN_TAG" -R BtbN/FFmpeg-Builds --json assets \
+            --jq '.assets[].name | select(test("-lgpl-[0-9.]+\\."))')
+          if ! grep -q -- "-win64-lgpl-${VERSION}\." <<< "$available"; then
+            echo "::error::BtbN release $BTBN_TAG has no FFmpeg ${VERSION} LGPL build. Versions it has:"
+            sed -E 's/.*-lgpl-([0-9.]+)\..*/\1/' <<< "$available" | sort -u
+            exit 1
+          fi
           for variant in win64-lgpl linux64-lgpl linuxarm64-lgpl; do
-            gh release download "${{ inputs.btbn_tag }}" -R BtbN/FFmpeg-Builds -D in \
+            gh release download "$BTBN_TAG" -R BtbN/FFmpeg-Builds -D in \
               -p "ffmpeg-n${VERSION}*-${variant}-${VERSION}.*"
           done
           ls -la in
@@ -60,10 +84,10 @@ jobs:
             cp "$root/bin/$exe" "$stage/bin/$exe"
             cp LICENSES/LGPL-2.1.txt "$stage/LICENSE"
             printf 'FFmpeg %s (LGPL) repackaged from BtbN/FFmpeg-Builds %s, %s\n\n' \
-              "$VERSION" "${{ inputs.btbn_tag }}" "$(basename "$src")" > "$stage/BUILDINFO.txt"
+              "$VERSION" "$BTBN_TAG" "$(basename "$src")" > "$stage/BUILDINFO.txt"
             cat buildconf.txt >> "$stage/BUILDINFO.txt"
             printf 'FFmpeg source: https://github.com/BtbN/FFmpeg-Builds/releases/tag/%s\nhttps://ffmpeg.org/releases/\nLAME source: https://lame.sourceforge.io/\n' \
-              "${{ inputs.btbn_tag }}" > "$stage/SOURCE.txt"
+              "$BTBN_TAG" > "$stage/SOURCE.txt"
             name="ffmpeg-${VERSION}-${rid}-lgpl.${kind}"
             if [ "$kind" = zip ]; then (cd "$stage" && zip -q -r "$GITHUB_WORKSPACE/out/$name" .)
             else tar -czf "out/$name" -C "$stage" --owner=0 --group=0 .; fi

@@ -36,7 +36,7 @@ Every archive has the tool at `bin/ffmpeg` (`bin/ffmpeg.exe` on Windows), plus `
 ## Publishing a new version
 
 1. Update the pinned inputs and run both workflows (Actions → Run workflow) with the new tag, for
-   example `ffmpeg-7.1`: the BtbN release tag is an input of `repackage-btbn.yml`; in
+   example `ffmpeg-7.1`: `repackage-btbn.yml` uses BtbN's newest dated build unless a BtbN release tag is given, and records the tag in `BUILDINFO.txt`; in
    `build-macos.yml` set `FFMPEG_SHA256` to the checksum published with the FFmpeg source tarball
    (the workflow refuses to build until it matches).
 2. Check the release: all five archives and `checksums.txt`.
