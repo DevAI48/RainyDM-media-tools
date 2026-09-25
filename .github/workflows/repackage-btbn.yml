@@ -1,0 +1,81 @@
+# Repackages pinned BtbN FFmpeg LGPL builds for Windows and Linux into RainyDM's layout
+# (bin/ffmpeg[.exe] + LICENSE + BUILDINFO.txt + SOURCE.txt) and publishes them to a release.
+name: Repackage BtbN LGPL builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag in this repository, e.g. ffmpeg-7.1
+        required: true
+        default: ffmpeg-7.1
+      btbn_tag:
+        description: The pinned BtbN/FFmpeg-Builds release tag (e.g. autobuild-2025-09-30-12-54)
+        required: true
+      branch:
+        description: The FFmpeg release branch in BtbN's asset names, e.g. 7.1
+        required: true
+        default: "7.1"
+
+permissions:
+  contents: write
+
+jobs:
+  repackage:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the pinned BtbN LGPL builds
+        run: |
+          mkdir -p in
+          for variant in win64-lgpl linux64-lgpl linuxarm64-lgpl; do
+            gh release download "${{ inputs.btbn_tag }}" -R BtbN/FFmpeg-Builds -D in \
+              -p "ffmpeg-n${VERSION}*-${variant}-${VERSION}.*"
+          done
+          ls -la in
+          # GPL or non-free variants must never be used.
+          if ls in | grep -E -- '-gpl-|nonfree'; then echo "::error::non-LGPL build"; exit 1; fi
+
+      - name: Check MP3 support (Linux x64 build)
+        run: |
+          mkdir -p check && tar -xf in/*linux64-lgpl*.tar.xz -C check --strip-components=1
+          check/bin/ffmpeg -hide_banner -encoders | tee encoders.txt | grep -q libmp3lame \
+            || { echo "::error::libmp3lame missing"; exit 1; }
+          check/bin/ffmpeg -hide_banner -buildconf > buildconf.txt
+          grep -q -- '--enable-gpl' buildconf.txt && { echo "::error::GPL build"; exit 1; } || true
+
+      - name: Repackage
+        run: |
+          mkdir -p out
+          pack() { # <source archive> <rid> <exe> <kind: zip|tar.gz>
+            src=$1; rid=$2; exe=$3; kind=$4
+            work=$(mktemp -d); stage=$(mktemp -d)
+            case "$src" in *.zip) unzip -q "$src" -d "$work";; *) tar -xf "$src" -C "$work";; esac
+            root=$(find "$work" -maxdepth 1 -mindepth 1 -type d | head -1)
+            mkdir -p "$stage/bin"
+            cp "$root/bin/$exe" "$stage/bin/$exe"
+            cp LICENSES/LGPL-2.1.txt "$stage/LICENSE"
+            printf 'FFmpeg %s (LGPL) repackaged from BtbN/FFmpeg-Builds %s, %s\n\n' \
+              "$VERSION" "${{ inputs.btbn_tag }}" "$(basename "$src")" > "$stage/BUILDINFO.txt"
+            cat buildconf.txt >> "$stage/BUILDINFO.txt"
+            printf 'FFmpeg source: https://github.com/BtbN/FFmpeg-Builds/releases/tag/%s\nhttps://ffmpeg.org/releases/\nLAME source: https://lame.sourceforge.io/\n' \
+              "${{ inputs.btbn_tag }}" > "$stage/SOURCE.txt"
+            name="ffmpeg-${VERSION}-${rid}-lgpl.${kind}"
+            if [ "$kind" = zip ]; then (cd "$stage" && zip -q -r "$GITHUB_WORKSPACE/out/$name" .)
+            else tar -czf "out/$name" -C "$stage" --owner=0 --group=0 .; fi
+          }
+          pack in/*win64-lgpl*.zip win-x64 ffmpeg.exe zip
+          pack in/*linux64-lgpl*.tar.xz linux-x64 ffmpeg tar.gz
+          pack in/*linuxarm64-lgpl*.tar.xz linux-arm64 ffmpeg tar.gz
+          (cd out && sha256sum ffmpeg-* > checksums-btbn.txt && cat checksums-btbn.txt)
+
+      - name: Publish to the release
+        run: |
+          gh release view "${{ inputs.tag }}" >/dev/null 2>&1 \
+            || gh release create "${{ inputs.tag }}" --title "${{ inputs.tag }}" \
+                 --notes "Pinned LGPL FFmpeg builds for RainyDM. Sources: see SOURCE.txt in each archive."
+          gh release upload "${{ inputs.tag }}" out/* --clobber

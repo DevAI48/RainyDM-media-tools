@@ -1,0 +1,88 @@
+# Builds FFmpeg (LGPL, with libmp3lame) for macOS Intel and Apple silicon, because BtbN has no macOS
+# builds, and publishes them to a release in RainyDM's layout.
+name: Build macOS LGPL builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag in this repository, e.g. ffmpeg-7.1
+        required: true
+        default: ffmpeg-7.1
+
+permissions:
+  contents: write
+
+env:
+  FFMPEG_VERSION: "7.1"
+  # Pinned sources: update the version and SHA-256 together, in a reviewed change.
+  FFMPEG_URL: https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz
+  FFMPEG_SHA256: "fill-in-the-sha256-of-ffmpeg-7.1.tar.xz"
+  LAME_URL: https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
+  LAME_SHA256: ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { rid: osx-x64, runner: macos-13 }
+          - { rid: osx-arm64, runner: macos-14 }
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0" # RainyDM's macOS minimum
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and check the pinned sources
+        run: |
+          curl -fsSL "$FFMPEG_URL" -o ffmpeg.tar.xz
+          curl -fsSL "$LAME_URL" -o lame.tar.gz
+          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | shasum -a 256 -c
+          echo "$LAME_SHA256  lame.tar.gz" | shasum -a 256 -c
+
+      - name: Build LAME (static, LGPL)
+        run: |
+          brew install nasm pkg-config
+          mkdir lame && tar -xzf lame.tar.gz -C lame --strip-components=1
+          cd lame
+          ./configure --prefix="$GITHUB_WORKSPACE/deps" --disable-shared --enable-static --disable-frontend
+          make -j"$(sysctl -n hw.ncpu)" && make install
+
+      - name: Build FFmpeg (LGPL)
+        run: |
+          mkdir ffmpeg && tar -xf ffmpeg.tar.xz -C ffmpeg --strip-components=1
+          cd ffmpeg
+          ./configure --prefix="$GITHUB_WORKSPACE/out-ffmpeg" \
+            --disable-gpl --disable-nonfree --disable-debug --disable-doc --disable-ffplay --disable-ffprobe \
+            --enable-static --disable-shared --enable-libmp3lame \
+            --extra-cflags="-I$GITHUB_WORKSPACE/deps/include" --extra-ldflags="-L$GITHUB_WORKSPACE/deps/lib"
+          make -j"$(sysctl -n hw.ncpu)" && make install
+
+      - name: Check the build
+        run: |
+          bin=out-ffmpeg/bin/ffmpeg
+          $bin -hide_banner -encoders | grep -q libmp3lame || { echo "::error::libmp3lame missing"; exit 1; }
+          $bin -hide_banner -buildconf | tee buildconf.txt
+          if grep -q -- '--enable-gpl' buildconf.txt; then echo "::error::GPL build"; exit 1; fi
+          otool -L $bin
+
+      - name: Package
+        run: |
+          stage=$(mktemp -d); mkdir -p "$stage/bin" out
+          cp out-ffmpeg/bin/ffmpeg "$stage/bin/ffmpeg"
+          cp LICENSES/LGPL-2.1.txt "$stage/LICENSE"
+          { echo "FFmpeg $FFMPEG_VERSION (LGPL) with LAME 3.100, built for ${{ matrix.rid }}"; echo; cat buildconf.txt; } > "$stage/BUILDINFO.txt"
+          printf 'FFmpeg source: %s\nLAME source: %s\n' "$FFMPEG_URL" "$LAME_URL" > "$stage/SOURCE.txt"
+          name="ffmpeg-${FFMPEG_VERSION}-${{ matrix.rid }}-lgpl.tar.gz"
+          tar -czf "out/$name" -C "$stage" .
+          (cd out && shasum -a 256 "$name" > "checksums-${{ matrix.rid }}.txt" && cat "checksums-${{ matrix.rid }}.txt")
+
+      - name: Publish to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ inputs.tag }}" >/dev/null 2>&1 \
+            || gh release create "${{ inputs.tag }}" --title "${{ inputs.tag }}" \
+                 --notes "Pinned LGPL FFmpeg builds for RainyDM. Sources: see SOURCE.txt in each archive."
+          gh release upload "${{ inputs.tag }}" out/* --clobber
