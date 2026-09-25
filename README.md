@@ -8,15 +8,15 @@ texts; it contains no RainyDM code.
 
 ## Releases
 
-Each release is tagged `ffmpeg-<version>` (for example `ffmpeg-7.1`) and contains:
+Each release is tagged `ffmpeg-<version>` (for example `ffmpeg-8.1`) and contains:
 
 | File | System | Made by |
 |---|---|---|
-| `ffmpeg-7.1-win-x64-lgpl.zip` | Windows x64 (also Windows on ARM, under emulation) | `repackage-btbn.yml` from BtbN `win64-lgpl` |
-| `ffmpeg-7.1-linux-x64-lgpl.tar.gz` | Linux x64 | `repackage-btbn.yml` from BtbN `linux64-lgpl` |
-| `ffmpeg-7.1-linux-arm64-lgpl.tar.gz` | Linux arm64 | `repackage-btbn.yml` from BtbN `linuxarm64-lgpl` |
-| `ffmpeg-7.1-osx-x64-lgpl.tar.gz` | macOS Intel | `build-macos.yml` |
-| `ffmpeg-7.1-osx-arm64-lgpl.tar.gz` | macOS Apple silicon | `build-macos.yml` |
+| `ffmpeg-8.1-win-x64-lgpl.zip` | Windows x64 (also Windows on ARM, under emulation) | `repackage-btbn.yml` from BtbN `win64-lgpl` |
+| `ffmpeg-8.1-linux-x64-lgpl.tar.gz` | Linux x64 | `repackage-btbn.yml` from BtbN `linux64-lgpl` |
+| `ffmpeg-8.1-linux-arm64-lgpl.tar.gz` | Linux arm64 | `repackage-btbn.yml` from BtbN `linuxarm64-lgpl` |
+| `ffmpeg-8.1-osx-x64-lgpl.tar.gz` | macOS Intel | `build-macos.yml` |
+| `ffmpeg-8.1-osx-arm64-lgpl.tar.gz` | macOS Apple silicon | `build-macos.yml` |
 | `checksums.txt` | SHA-256 of every file | both workflows |
 
 Every archive has the tool at `bin/ffmpeg` (`bin/ffmpeg.exe` on Windows), plus `LICENSE`,
@@ -28,17 +28,19 @@ Every archive has the tool at `bin/ffmpeg` (`bin/ffmpeg.exe` on Windows), plus `
   same). GPL and non-free builds are never published.
 - **MP3 support.** Every build must list `libmp3lame` in `ffmpeg -encoders`; the workflows fail
   otherwise.
-- **Pinned inputs.** The BtbN release tag and the FFmpeg and LAME source tarballs (with their
-  SHA-256) are fixed in the workflows; updating them is a reviewed change.
+- **Pinned inputs.** The macOS build uses a fixed FFmpeg git tag, checked against its commit, and
+  the LAME source tarball, checked against its SHA-256; updating them is a reviewed change. The
+  BtbN release used for Windows and Linux is recorded in each archive's `BUILDINFO.txt`.
 - **Source.** `SOURCE.txt` in each archive and each release note link to the exact FFmpeg and LAME
   sources used. This is the LGPL "corresponding source".
 
 ## Publishing a new version
 
-1. Update the pinned inputs and run both workflows (Actions → Run workflow) with the new tag, for
-   example `ffmpeg-7.1`: `repackage-btbn.yml` uses BtbN's newest dated build unless a BtbN release tag is given, and records the tag in `BUILDINFO.txt`; in
-   `build-macos.yml` set `FFMPEG_SHA256` to the checksum published with the FFmpeg source tarball
-   (the workflow refuses to build until it matches).
+1. Run both workflows (Actions → Run workflow) with the new tag, for example `ffmpeg-8.1`.
+   `repackage-btbn.yml` uses BtbN's newest dated build unless a BtbN release tag is given (BtbN
+   keeps only recent releases and FFmpeg branches). For a new FFmpeg version, first update
+   `FFMPEG_VERSION`, `FFMPEG_TAG` and `FFMPEG_COMMIT` in `build-macos.yml`; the workflow refuses
+   to build when the tag does not point at that commit.
 2. Check the release: all five archives and `checksums.txt`.
 3. Join the per-workflow checksum files into one (`cat checksums-*.txt > checksums.txt`), then, in
    the RainyDM repository, record the checksums:

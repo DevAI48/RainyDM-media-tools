@@ -6,18 +6,20 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag in this repository, e.g. ffmpeg-7.1
+        description: Release tag in this repository, e.g. ffmpeg-8.1
         required: true
-        default: ffmpeg-7.1
+        default: ffmpeg-8.1
 
 permissions:
   contents: write
 
 env:
-  FFMPEG_VERSION: "7.1"
-  # Pinned sources: update the version and SHA-256 together, in a reviewed change.
-  FFMPEG_URL: https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz
-  FFMPEG_SHA256: "fill-in-the-sha256-of-ffmpeg-7.1.tar.xz"
+  FFMPEG_VERSION: "8.1"
+  # Pinned sources: update the tag and its commit together, in a reviewed change
+  # (git ls-remote --tags https://github.com/FFmpeg/FFmpeg 'refs/tags/n8.1*', the ^{} line).
+  FFMPEG_GIT: https://github.com/FFmpeg/FFmpeg.git
+  FFMPEG_TAG: n8.1.3
+  FFMPEG_COMMIT: 1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7
   LAME_URL: https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
   LAME_SHA256: ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
 
@@ -26,8 +28,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { rid: osx-x64, runner: macos-13 }
-          - { rid: osx-arm64, runner: macos-14 }
+          - { rid: osx-x64, runner: macos-15-intel }
+          - { rid: osx-arm64, runner: macos-15 }
     runs-on: ${{ matrix.runner }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.0" # RainyDM's macOS minimum
@@ -36,9 +38,13 @@ jobs:
 
       - name: Fetch and check the pinned sources
         run: |
-          curl -fsSL "$FFMPEG_URL" -o ffmpeg.tar.xz
+          git init -q ffmpeg
+          git -C ffmpeg fetch -q --depth 1 "$FFMPEG_GIT" "refs/tags/$FFMPEG_TAG"
+          git -C ffmpeg checkout -q FETCH_HEAD
+          actual=$(git -C ffmpeg rev-parse HEAD)
+          [ "$actual" = "$FFMPEG_COMMIT" ] \
+            || { echo "::error::$FFMPEG_TAG is $actual, expected $FFMPEG_COMMIT"; exit 1; }
           curl -fsSL "$LAME_URL" -o lame.tar.gz
-          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | shasum -a 256 -c
           echo "$LAME_SHA256  lame.tar.gz" | shasum -a 256 -c
 
       - name: Build LAME (static, LGPL)
@@ -51,7 +57,6 @@ jobs:
 
       - name: Build FFmpeg (LGPL)
         run: |
-          mkdir ffmpeg && tar -xf ffmpeg.tar.xz -C ffmpeg --strip-components=1
           cd ffmpeg
           ./configure --prefix="$GITHUB_WORKSPACE/out-ffmpeg" \
             --disable-gpl --disable-nonfree --disable-debug --disable-doc --disable-ffplay --disable-ffprobe \
@@ -72,8 +77,8 @@ jobs:
           stage=$(mktemp -d); mkdir -p "$stage/bin" out
           cp out-ffmpeg/bin/ffmpeg "$stage/bin/ffmpeg"
           cp LICENSES/LGPL-2.1.txt "$stage/LICENSE"
-          { echo "FFmpeg $FFMPEG_VERSION (LGPL) with LAME 3.100, built for ${{ matrix.rid }}"; echo; cat buildconf.txt; } > "$stage/BUILDINFO.txt"
-          printf 'FFmpeg source: %s\nLAME source: %s\n' "$FFMPEG_URL" "$LAME_URL" > "$stage/SOURCE.txt"
+          { echo "FFmpeg $FFMPEG_TAG (LGPL) with LAME 3.100, built for ${{ matrix.rid }}"; echo; cat buildconf.txt; } > "$stage/BUILDINFO.txt"
+          printf 'FFmpeg source: %s tag %s (commit %s)\nLAME source: %s\n' "$FFMPEG_GIT" "$FFMPEG_TAG" "$FFMPEG_COMMIT" "$LAME_URL" > "$stage/SOURCE.txt"
           name="ffmpeg-${FFMPEG_VERSION}-${{ matrix.rid }}-lgpl.tar.gz"
           tar -czf "out/$name" -C "$stage" .
           (cd out && shasum -a 256 "$name" > "checksums-${{ matrix.rid }}.txt" && cat "checksums-${{ matrix.rid }}.txt")

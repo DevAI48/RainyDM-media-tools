@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag in this repository, e.g. ffmpeg-7.1
+        description: Release tag in this repository, e.g. ffmpeg-8.1
         required: true
-        default: ffmpeg-7.1
+        default: ffmpeg-8.1
       btbn_tag:
         description: >-
           BtbN/FFmpeg-Builds release tag (e.g. autobuild-2026-09-24-14-14). Leave empty to use
@@ -16,9 +16,9 @@ on:
         required: false
         default: ""
       branch:
-        description: The FFmpeg release branch in BtbN's asset names, e.g. 7.1
+        description: The FFmpeg release branch in BtbN's asset names, e.g. 8.1
         required: true
-        default: "7.1"
+        default: "8.1"
 
 permissions:
   contents: write
